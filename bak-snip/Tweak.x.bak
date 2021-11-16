@@ -1,0 +1,567 @@
+/* How to Hook with Logos
+Hooks are written with syntax similar to that of an Objective-C @implementation.
+You don't need to #include <substrate.h>, it will be done automatically, as will
+the generation of a class list and an automatic constructor.
+
+%hook ClassName
+
+// Hooking a class method
++ (id)sharedInstance {
+	return %orig;
+}
+
+// Hooking an instance method with an argument.
+- (void)messageName:(int)argument {
+	%log; // Write a message about this call, including its class, name and arguments, to the system log.
+
+	%orig; // Call through to the original function with its original arguments.
+	%orig(nil); // Call through to the original function with a custom argument.
+
+	// If you use %orig(), you MUST supply all arguments (except for self and _cmd, the automatically generated ones.)
+}
+
+// Hooking an instance method with no arguments.
+- (id)noArguments {
+	%log;
+	id awesome = %orig;
+	[awesome doSomethingElse];
+
+	return awesome;
+}
+
+// Always make sure you clean up after yourself; Not doing so could have grave consequences!
+%end
+*/
+
+#include <UIKit/UIKit.h>
+#include <AVFoundation/AVFoundation.h>
+#include <CoreMedia/CoreMedia.h>
+#import <VideoToolbox/VideoToolbox.h>
+// #import <UserNotifications/UserNotifications.h>
+
+// @interface CCNotice : NSObject <UNUserNotificationCenterDelegate>
+
+// + (void)notice:(NSString *)title :(NSString*)body;
+
+// @end
+
+// @implementation CCNotice
+
+// + (CCNotice*)getInstance{
+// 	static CCNotice *_self = nil;
+// 	if (_self == nil) {
+// 		_self = [CCNotice new];
+// 	}
+//     return _self;
+// }
+
+// - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
+//     completionHandler(UNNotificationPresentationOptionAlert);
+// 	NSLog(@"前台通知完成");
+// }
+
+// + (void)notice:(NSString *)title :(NSString*)body{
+// 	[[UNUserNotificationCenter currentNotificationCenter] requestAuthorizationWithOptions:UNAuthorizationOptionBadge|UNAuthorizationOptionSound|UNAuthorizationOptionAlert|UNAuthorizationOptionCarPlay completionHandler:^(BOOL granted, NSError * _Nullable error) {
+//         //在block中会传入布尔值granted，表示用户是否同意
+//         if (granted) {
+//             //如果用户申请权限成功，则可以设置通知中心的代理
+// 			UNMutableNotificationContent *nContent = [UNMutableNotificationContent new];
+// 			nContent.title = title;
+// 			nContent.body = body;
+// 			// nContent.subtitle = @"副标题";
+// 			UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:1 repeats:NO];
+			
+// 			UNNotificationRequest *nRequest = [UNNotificationRequest requestWithIdentifier:@"UNNotificationDefault" content:nContent trigger:trigger];
+			
+// 			UNUserNotificationCenter *nCenter = [UNUserNotificationCenter currentNotificationCenter];
+// 			[nCenter setDelegate:[CCNotice getInstance]];
+// 			[nCenter addNotificationRequest:nRequest withCompletionHandler:^(NSError *error){
+// 				if (error) NSLog(@"通知失败，%@", error);
+// 			}];
+//         }
+//     }];
+// }
+
+// @end
+
+/*%hook AVCaptureInputPort
+-(instancetype)init{
+	AVCaptureInputPort *orig = %orig;
+	NSLog(@"AVCaptureInputPort 被初始化了");
+	return orig;
+}
+%end*/
+
+
+// %hook AVCaptureDevice
+
+// -(instancetype)init{
+// 	NSLog(@"相机被初始化了");
+// 	return %orig;
+// }
+
+// + (AVCaptureDevice *)deviceWithUniqueID:(NSString *)deviceUniqueID {
+// 	NSLog(@"相机被初始化0");
+// 	return %orig;
+// }
+
+// + (AVCaptureDevice *)defaultDeviceWithMediaType:(AVMediaType)mediaType{
+// 	NSLog(@"相机被初始化了1 %@", [self formats]);
+// 	return %orig;
+// }
+
+// + (AVCaptureDevice *)defaultDeviceWithDeviceType:(AVCaptureDeviceType)deviceType mediaType:(AVMediaType)mediaType position:(AVCaptureDevicePosition)position {
+// 	// 前置摄像头只需要这一次
+// 	NSLog(@"相机被初始化了2");
+// 	return %orig;
+// }
+
+// %end
+
+
+// camera hook start
+%hook AVCaptureDeviceInput
+/*
++ (instancetype)deviceInputWithDevice:(AVCaptureDevice *)device error:(NSError * _Nullable *)outError{
+	NSLog(@"类方法创建device [%@]", device);
+	return %orig;
+}
+*/
+
+- (instancetype)initWithDevice:(AVCaptureDevice *)device error:(NSError * _Nullable *)outError{
+	// position属性，0:麦克风   1:后置摄像头   2:前置摄像头
+	// device = 输入设备，相机或者麦克风 用于为session提供输入, (为捕获会话提供输入（如音频或视频）并为硬件特定捕获功能提供控件的设备。)
+	if ([device position] == 0) return %orig; // 忽略麦克风
+	// if ([device position] != 1) return %orig;
+
+
+	@try{
+		// AVCaptureDevice *device_c = [AVCaptureDevice defaultDeviceWithDeviceType: AVCaptureDeviceTypeBuiltInWideAngleCamera mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionFront];
+		// AVCaptureDeviceInput *device_input_c = [AVCaptureDeviceInput deviceInputWithDevice:device_c error:nil];
+
+		// device = device_c;
+
+		AVCaptureDeviceInput *_me = %orig(device, outError); // 原始方法，关联硬件设备
+
+		// NSLog(@"device_input_c ports = %@", device_input_c.ports);
+
+
+		// AVCaptureInputPort vide 0000 为视频输出
+		// ("<AVCaptureInputPort: 0x2837bd370 (AVCaptureDeviceInput: 0x2835f2020) vide 0000 disabled>",
+		// "<AVCaptureInputPort: 0x2837bd360 (AVCaptureDeviceInput: 0x2835f2020) mobj 0000 enabled>",
+		// "<AVCaptureInputPort: 0x2837bd250 (AVCaptureDeviceInput: 0x2835f2020) meta mebx (face) enabled>")
+
+		
+		// port0 为视频输入 格式为 YUV/420v 或者 YUV/420f
+		// [self ports][1].enabled = NO;
+		// [CCNotice notice:@"相机初始化" :[NSString stringWithFormat:@"format=%@", [device activeFormat]]];
+		NSLog(@"对象方法创建deviceInput [device = %@]   [ports = %@]   [activeFormat = %@]   [formats = %@]", device, [self ports], [device activeFormat], [device formats]);
+		// 后置摄像头 - uniqueID = com.apple.avfoundation.avcapturedevice.built-in_video:0
+		
+		/*for (AVCaptureInputPort *the_port in [self ports]) {
+			NSLog(@"port = %@, formatDescription = %@, mediaType = %@", the_port, [the_port formatDescription], [the_port mediaType]);
+		}*/
+
+
+		if ([device position] == 2) {
+			// device可设置、曝光度、裁剪、对焦、闪光灯、管理帧率、白平衡
+			// 这个方法 [device activeFormat] 可获取 AVCaptureDeviceFormat 对象，包含捕获的格式，如帧率、分辨率、颜色空间、ISO值、是否自动对焦、曝光度、格式等
+			NSLog(@"（（ 这是前置摄像头初始化了");
+		}
+		// 对象方法创建deviceInput [<AVCaptureFigVideoDevice: 0x10480b2b0 [后置镜头][com.apple.avfoundation.avcapturedevice.built-in_video:0]>]---[1]
+		return _me;
+	}@catch(NSException *except) {
+		NSLog(@"hook 出错了: %@", except);
+		return %orig;
+	}
+}
+
+%end
+
+
+%hook AVCaptureSession
+
+-(void) startRunning {
+	// TODO:: 此处可能需要注意
+	NSLog(@"开始使用摄像头了， 预设值是 %@", [self sessionPreset]);
+	%orig;
+}
+
+-(void) stopRunning {
+	NSLog(@"停止使用摄像头了");
+	%orig;
+}
+
+- (void)addInput:(AVCaptureDeviceInput *)input {
+	if ([[input device] position] == 2) {
+		// [CCNotice notice:@"开始使用前置摄像头" :[NSString stringWithFormat:@"format=%@", [[input device] activeFormat]]];
+	}
+ 	// NSLog(@"添加了一个输入设备 %@", input);
+	%orig;
+}
+
+// - (void)addOutput:(AVCaptureOutput *)output{
+// 	NSLog(@"添加了一个输出设备 %@", output);
+// 	%orig;
+// }
+
+/* - (void)removeInput:(AVCaptureInput *)input {
+	NSLog(@"移除了一个输入设备 %@", input);
+	%orig;
+}
+
+- (void)removeOutput:(AVCaptureOutput *)output {
+	NSLog(@"移除了一个输出设备 %@", output);
+	%orig;
+}*/
+
+%end
+
+// %hook AVCaptureVideoPreviewLayer
+// - (void)addSublayer:(CALayer *)layer{
+// 	%orig;
+// 	self.opacity = 0.1;
+// 	NSLog(@"===addSublayer = %@", layer);
+	// %orig(layer);
+	// http://192.168.1.3:8080/nier.mp4
+	// NSString *str = @"http://192.168.1.3:8080/nier.mp4";
+	// // NSURL *url = [[NSBundle mainBundle] URLForResource:@"AV" withExtension:@"mp4"];
+	// NSURL *url = [NSURL URLWithString:str];
+	// AVPlayer *player = [AVPlayer playerWithURL:url];
+	// AVPlayerLayer *playerLayer = [AVPlayerLayer playerLayerWithPlayer:player];
+	// // playerLayer.masksToBounds= YES;
+	// // playerLayer.borderColor = [UIColor redColor].CGColor;
+	// // playerLayer.borderWidth = 5.0f;
+	// // playerLayer.cornerRadius = 20.0f;
+	// // playerLayer.frame = layer.bounds;
+	// [playerLayer addSublayer:layer];
+	// [layer removeFromSuperlayer];
+	// [layer insertSublayer:playerLayer below:self];
+	// [layer replaceSublayer:self with:playerLayer];
+
+	// [player play];
+	// NSLog(@"self = %@,  player = %@", [self class], [playerLayer class]);
+	// NSLog(@"sublayers = %@,  superlayer = %@ ", [playerLayer sublayers], [playerLayer superlayer]);
+	
+	// for (AVCaptureDeviceInput *device_input in [[self session] inputs]) {
+	// 	if ([[device_input device] position] == 2) {
+	// 		return;
+	// 	}
+	// }
+	// %orig;
+// }
+
+// %end
+
+
+
+// %hook AVCaptureVideoDataOutput
+// - (void)setSampleBufferDelegate:(id<AVCaptureVideoDataOutputSampleBufferDelegate>)sampleBufferDelegate queue:(dispatch_queue_t)sampleBufferCallbackQueue{
+// 	// 
+// 	NSLog(@"setSampleBufferDelegate [%@] [%@]", sampleBufferDelegate, sampleBufferCallbackQueue);
+// 	%orig;
+// }
+// %end
+
+
+// %hook AVCaptureMetadataOutput
+// - (void)setMetadataObjectsDelegate:(id<AVCaptureMetadataOutputObjectsDelegate>)objectsDelegate queue:(dispatch_queue_t)objectsCallbackQueue{
+
+// 	NSLog(@"----设置委托   [%@]   [%@]", objectsDelegate, objectsCallbackQueue);
+// 	%orig;
+// }
+// %end
+
+
+/*
+%hook AVCaptureConnection
+
+- (instancetype)initWithInputPorts:(NSArray<AVCaptureInputPort *> *)ports output:(AVCaptureOutput *)output{
+	// 创建连接的监听: 会有多个输入对象 连接 到同一个输出对象，可能是连接不同原数据的输入
+	NSLog(@"创建连接对象 ports=%@   output=%@", ports, output);
+	return %orig;
+}
+
+%end
+*/
+
+
+
+// %hook AVCapturePhotoOutput
+// - (void)capturePhotoWithSettings:(AVCapturePhotoSettings *)settings delegate:(id<AVCapturePhotoCaptureDelegate>)delegate {
+// 	NSLog(@"开始拍照 [%@]   [%@]", settings, delegate);
+// 	%orig;
+// }
+// %end
+
+
+
+/*
+---------------  C HOOK ---------------
+*/
+// %hookf(FILE *, fopen, const char *path, const char *mode) {
+// 	NSLog(@"Hey, we're hooking fopen to deny relative paths!");
+// 	return %orig; // Call the original implementation of this function
+// }
+// MSHook(FILE *, fopen, const char *path, const char *mode){
+// 	NSLog(@"Hey, we're hooking fopen to deny relative paths!");
+// 	return _fopen(path, mode); // Call the original implementation of this function
+// }
+// 创建示例缓冲区
+// %hookf(OSStatus, CMSampleBufferCreate, CFAllocatorRef allocator, CMBlockBufferRef dataBuffer, Boolean dataReady, CMSampleBufferMakeDataReadyCallback makeDataReadyCallback, void *makeDataReadyRefcon, CMFormatDescriptionRef formatDescription, CMItemCount numSamples, CMItemCount numSampleTimingEntries, const CMSampleTimingInfo *sampleTimingArray, CMItemCount numSampleSizeEntries, const size_t *sampleSizeArray, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCreate");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCreateReady, CFAllocatorRef allocator, CMBlockBufferRef dataBuffer, CMFormatDescriptionRef formatDescription, CMItemCount numSamples, CMItemCount numSampleTimingEntries, const CMSampleTimingInfo *sampleTimingArray, CMItemCount numSampleSizeEntries, const size_t *sampleSizeArray, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCreateReady");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCreateForImageBuffer, CFAllocatorRef allocator, CVImageBufferRef imageBuffer, Boolean dataReady, CMSampleBufferMakeDataReadyCallback makeDataReadyCallback, void *makeDataReadyRefcon, CMVideoFormatDescriptionRef formatDescription, const CMSampleTimingInfo *sampleTiming, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCreateForImageBuffer");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCreateReadyWithImageBuffer, CFAllocatorRef allocator, CVImageBufferRef imageBuffer, CMVideoFormatDescriptionRef formatDescription, const CMSampleTimingInfo *sampleTiming, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCreateReadyWithImageBuffer");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMAudioSampleBufferCreateWithPacketDescriptions, CFAllocatorRef allocator, CMBlockBufferRef dataBuffer, Boolean dataReady, CMSampleBufferMakeDataReadyCallback makeDataReadyCallback, void *makeDataReadyRefcon, CMFormatDescriptionRef formatDescription, CMItemCount numSamples, CMTime presentationTimeStamp, const AudioStreamPacketDescription *packetDescriptions, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMAudioSampleBufferCreateWithPacketDescriptions");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMAudioSampleBufferCreateReadyWithPacketDescriptions, CFAllocatorRef allocator, CMBlockBufferRef dataBuffer, CMFormatDescriptionRef formatDescription, CMItemCount numSamples, CMTime presentationTimeStamp, const AudioStreamPacketDescription *packetDescriptions, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMAudioSampleBufferCreateReadyWithPacketDescriptions");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCreateCopy, CFAllocatorRef allocator, CMSampleBufferRef sbuf, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCreateCopy");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCreateCopyWithNewTiming, CFAllocatorRef allocator, CMSampleBufferRef originalSBuf, CMItemCount numSampleTimingEntries, const CMSampleTimingInfo *sampleTimingArray, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCreateCopyWithNewTiming");
+// 	return %orig;
+// }
+
+// 修改示例缓冲器
+// %hookf(OSStatus, CMSampleBufferCallBlockForEachSample, CMSampleBufferRef sbuf, OSStatus *handle){
+// 	NSLog(@"--------------> CMSampleBufferCallBlockForEachSample");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferSetDataFailed, CMSampleBufferRef sbuf, OSStatus status){
+// 	NSLog(@"--------------> CMSampleBufferSetDataFailed");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferSetInvalidateHandler, CMSampleBufferRef sbuf, CMSampleBufferInvalidateHandler invalidateHandler){
+// 	NSLog(@"--------------> CMSampleBufferSetInvalidateHandler");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCallForEachSample, CMSampleBufferRef sbuf, OSStatus *callback, void *refcon){
+// 	NSLog(@"--------------> CMSampleBufferCreate");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferCopySampleBufferForRange, CFAllocatorRef allocator, CMSampleBufferRef sbuf, CFRange sampleRange, CMSampleBufferRef  _Nullable *sampleBufferOut){
+// 	NSLog(@"--------------> CMSampleBufferCopySampleBufferForRange");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferInvalidate, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferInvalidate");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferMakeDataReady, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferMakeDataReady");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferSetDataBuffer, CMSampleBufferRef sbuf, CMBlockBufferRef dataBuffer){
+// 	NSLog(@"--------------> CMSampleBufferSetDataBuffer");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferSetDataReady, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferSetDataReady");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferSetInvalidateCallback, CMSampleBufferRef sbuf, CMSampleBufferInvalidateCallback invalidateCallback, uint64_t invalidateRefCon){
+// 	NSLog(@"--------------> CMSampleBufferSetInvalidateCallback");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferSetOutputPresentationTimeStamp, CMSampleBufferRef sbuf, CMTime outputPresentationTimeStamp){
+// 	NSLog(@"--------------> CMSampleBufferSetOutputPresentationTimeStamp");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferTrackDataReadiness, CMSampleBufferRef sbuf, CMSampleBufferRef sampleBufferToTrack){
+// 	NSLog(@"--------------> CMSampleBufferTrackDataReadiness");
+// 	return %orig;
+// }
+// 检查样品缓冲器
+// %hookf(CMBlockBufferRef, CMSampleBufferGetDataBuffer, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetDataBuffer");
+// 	return %orig;
+// }
+// %hookf(CMTime, CMSampleBufferGetDecodeTimeStamp, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetDecodeTimeStamp");
+// 	return %orig;
+// }
+// %hookf(CMTime, CMSampleBufferGetDuration, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetDuration");
+// 	return %orig;
+// }
+// %hookf(CMFormatDescriptionRef, CMSampleBufferGetFormatDescription, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetFormatDescription");
+// 	return %orig;
+// }
+
+// @interface CCCV : NSObject
+// + (CVPixelBufferRef)CVPixelBufferRefFromUiImage:(UIImage *)img;
+// @end
+
+// @implementation CCCV
+// + (CVPixelBufferRef)CVPixelBufferRefFromUiImage:(UIImage *)img
+// {
+//     CGImageRef image = [img CGImage];
+//     NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:
+//                              [NSNumber numberWithBool:YES], kCVPixelBufferCGImageCompatibilityKey,
+//                              [NSNumber numberWithBool:YES], kCVPixelBufferCGBitmapContextCompatibilityKey,
+//                              nil];
+    
+//     CVPixelBufferRef pxbuffer = NULL;
+    
+//     CGFloat frameWidth = CGImageGetWidth(image);
+//     CGFloat frameHeight = CGImageGetHeight(image);
+    
+//     CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault,
+//                                           frameWidth,
+//                                           frameHeight,
+//                                           kCVPixelFormatType_32ARGB,
+//                                           (__bridge CFDictionaryRef) options,
+//                                           &pxbuffer);
+    
+//     NSParameterAssert(status == kCVReturnSuccess && pxbuffer != NULL);
+    
+//     CVPixelBufferLockBaseAddress(pxbuffer, 0);
+//     void *pxdata = CVPixelBufferGetBaseAddress(pxbuffer);
+//     NSParameterAssert(pxdata != NULL);
+    
+//     CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+    
+//     CGContextRef context = CGBitmapContextCreate(pxdata,
+//                                                  frameWidth,
+//                                                  frameHeight,
+//                                                  8,
+//                                                  CVPixelBufferGetBytesPerRow(pxbuffer),
+//                                                  rgbColorSpace,
+//                                                  (CGBitmapInfo)kCGImageAlphaNoneSkipFirst);
+//     NSParameterAssert(context);
+//     CGContextConcatCTM(context, CGAffineTransformIdentity);
+//     CGContextDrawImage(context, CGRectMake(0,
+//                                            0,
+//                                            frameWidth,
+//                                            frameHeight),
+//                        image);
+//     CGColorSpaceRelease(rgbColorSpace);
+//     CGContextRelease(context);
+    
+//     CVPixelBufferUnlockBaseAddress(pxbuffer, 0);
+    
+//     return pxbuffer;
+// }
+// @end
+
+// 这里注意下⚠️
+// %hookf(CVImageBufferRef, CMSampleBufferGetImageBuffer, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetImageBuffer ->%@", sbuf);
+
+// 	UIImage *image = [UIImage imageWithData:[NSData dataWithContentsOfURL:[NSURL URLWithString:@"http://192.168.1.3:8080/IMG_2144.jpeg"]]];
+// 	CVImageBufferRef pixelBuffer = [CCCV CVPixelBufferRefFromUiImage:image];
+// 	return pixelBuffer;
+
+// 	// NSString *str = @"http://192.168.1.3:8080/nier.mp4";
+//     // // NSURL *url = [[NSBundle mainBundle] URLForResource:@"AV" withExtension:@"mp4"];
+//     // NSURL *url = [NSURL URLWithString:str];
+//     // AVPlayer *player = [AVPlayer playerWithURL:url];
+	
+
+// 	// return %orig(sbuf);
+// }
+
+
+
+// - (void)captureOutput:(AVCaptureOutput *)captureOutput didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection
+// %hookf(CMItemCount, CMSampleBufferGetNumSamples, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetNumSamples");
+// 	return %orig;
+// }
+// %hookf(CMTime, CMSampleBufferGetOutputDecodeTimeStamp, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetOutputDecodeTimeStamp");
+// 	return %orig;
+// }
+// %hookf(CMTime, CMSampleBufferGetOutputDuration, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetOutputDuration");
+// 	return %orig;
+// }
+// %hookf(CMTime, CMSampleBufferGetOutputPresentationTimeStamp, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetOutputPresentationTimeStamp");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferGetOutputSampleTimingInfoArray, CMSampleBufferRef sbuf, CMItemCount timingArrayEntries, CMSampleTimingInfo *timingArrayOut, CMItemCount *timingArrayEntriesNeededOut){
+// 	NSLog(@"--------------> CMSampleBufferGetOutputSampleTimingInfoArray");
+// 	return %orig;
+// }
+// %hookf(CMTime, CMSampleBufferGetPresentationTimeStamp, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetPresentationTimeStamp");
+// 	return %orig;
+// }
+// %hookf(CFArrayRef, CMSampleBufferGetSampleAttachmentsArray, CMSampleBufferRef sbuf, Boolean createIfNecessary){
+// 	NSLog(@"--------------> CMSampleBufferGetSampleAttachmentsArray");
+// 	return %orig;
+// }
+// %hookf(size_t, CMSampleBufferGetSampleSize, CMSampleBufferRef sbuf, CMItemIndex sampleIndex){
+// 	NSLog(@"--------------> CMSampleBufferGetSampleSize");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferGetSampleSizeArray, CMSampleBufferRef sbuf, CMItemCount sizeArrayEntries, size_t *sizeArrayOut, CMItemCount *sizeArrayEntriesNeededOut){
+// 	NSLog(@"--------------> CMSampleBufferGetSampleSizeArray");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferGetSampleTimingInfo, CMSampleBufferRef sbuf, CMItemIndex sampleIndex, CMSampleTimingInfo *timingInfoOut){
+// 	NSLog(@"--------------> CMSampleBufferGetSampleTimingInfo");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSampleBufferGetSampleTimingInfoArray, CMSampleBufferRef sbuf, CMItemCount numSampleTimingEntries, CMSampleTimingInfo *timingArrayOut, CMItemCount *timingArrayEntriesNeededOut){
+// 	NSLog(@"--------------> CMSampleBufferGetSampleTimingInfoArray");
+// 	return %orig;
+// }
+// %hookf(size_t, CMSampleBufferGetTotalSampleSize, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferGetTotalSampleSize");
+// 	return %orig;
+// }
+// %hookf(Boolean, CMSampleBufferHasDataFailed, CMSampleBufferRef sbuf, OSStatus *statusOut){
+// 	NSLog(@"--------------> CMSampleBufferHasDataFailed");
+// 	return %orig;
+// }
+// %hookf(Boolean, CMSampleBufferDataIsReady, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferDataIsReady");
+// 	return %orig;
+// }
+// %hookf(Boolean, CMSampleBufferIsValid, CMSampleBufferRef sbuf){
+// 	NSLog(@"--------------> CMSampleBufferIsValid");
+// 	return %orig;
+// }
+// %hookf(CFTypeID, CMSampleBufferGetTypeID){
+// 	NSLog(@"--------------> CMSampleBufferGetTypeID");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMSimpleQueueCreate, CFAllocatorRef allocator, int32_t capacity, CMSimpleQueueRef  _Nullable *queueOut){
+// 	NSLog(@"--------------> CMSimpleQueueCreate");
+// 	return %orig;
+// }
+// %hookf(OSStatus, CMBufferQueueCreate, CFAllocatorRef allocator, CMItemCount capacity, const CMBufferCallbacks *callbacks, CMBufferQueueRef  _Nullable *queueOut){
+// 	NSLog(@"--------------> CMBufferQueueCreate");
+// 	return %orig;
+// }
+
+
+%ctor {
+	// MSHookFunction(&CMSampleBufferSetDataReady, &_CMSampleBufferSetDataReady, &oldCM);
+	// MSHookFunction(CMSampleBufferSetDataReady, MSHake(CMSampleBufferSetDataReady));
+	// MSHookFunction(fopen, MSHake(fopen));
+	NSLog(@"我被载入成功啦");
+	// [CCNotice notice:@"测试" :@"这是一个简单的测试"];
+}
