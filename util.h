@@ -1,6 +1,7 @@
 //此方法放在@interface XXXViewController 之前
 // @see https://www.jianshu.com/p/c2f8ef80e925
 
+// RotatePixelBufferToAngle(pixelBuffer, radians(90));
 static double radians (double degrees) {return degrees * M_PI/180;}
 
 static double ScalingFactorForAngle(double angle, CGSize originalSize) {
@@ -16,7 +17,7 @@ CIContext *context = nil;
 CIImage *ci_originalImage = nil;
 CIImage *ci_transformedImage = nil;
 CIImage *ci_userTempImage = nil;
-// 旋转CVPixelBufferRef
+
 static inline void RotatePixelBufferToAngle(CVPixelBufferRef thePixelBuffer, double theAngle) {
 
     @autoreleasepool {
@@ -28,7 +29,7 @@ static inline void RotatePixelBufferToAngle(CVPixelBufferRef thePixelBuffer, dou
         }
 
         long int w = CVPixelBufferGetWidth(thePixelBuffer);
-        long int h = w; // CVPixelBufferGetHeight(thePixelBuffer);
+        long int h = CVPixelBufferGetHeight(thePixelBuffer);
 
         ci_originalImage = [CIImage imageWithCVPixelBuffer:thePixelBuffer];
         ci_userTempImage = [ci_originalImage imageByApplyingTransform:CGAffineTransformMakeScale(0.6, 0.6)];
@@ -53,7 +54,7 @@ static inline void RotatePixelBufferToAngle(CVPixelBufferRef thePixelBuffer, dou
                                       extentR.size.height/2.0+extentR.origin.y);
         CGSize scaledSize = CGSizeMake(w*scalingFact, h*scalingFact);
         CGRect cropRect = CGRectMake(centerP.x-scaledSize.width/2.0, centerP.y-scaledSize.height/2.0,
-                                     scaledSize.width, scaledSize.height);
+                                     scaledSize.height, scaledSize.width);
 
 
         CGImageRef cg_img = [context createCGImage:ci_transformedImage fromRect:cropRect];
