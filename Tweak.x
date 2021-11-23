@@ -13,10 +13,6 @@ static BOOL g_cameraRunning = NO;
 
 NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件位置
 
-static void releaseNSData(void *o, void *block, size_t size) {
-    NSData *data = (__bridge_transfer NSData*) o;
-    data = nil; // Assuming ARC is enabled
-}
 
 @interface GetFrame : NSObject
 + (CMSampleBufferRef _Nullable)getCurrentFrame:(CMSampleBufferRef) originSampleBuffer :(BOOL)forceReNew;
@@ -44,6 +40,18 @@ static void releaseNSData(void *o, void *block, size_t size) {
         if (mediaType != kCMMediaType_Video) {
             // @see https://developer.apple.com/documentation/coremedia/cmmediatype?language=objc
             return originSampleBuffer;
+        }
+        // 此类需要视频完全匹配分辨率
+        CVImageBufferRef originImageBuffer = CMSampleBufferGetImageBuffer(originSampleBuffer);
+        if (originImageBuffer != nil) {
+            NSString *str = [NSString stringWithFormat:@"%@\nwidth: %ld\nheight: %ld",
+                [NSProcessInfo processInfo].processName,
+                CVPixelBufferGetWidth(originImageBuffer),
+                CVPixelBufferGetHeight(originImageBuffer)
+            ];
+            // NSLog(@"camera info = %@", str);
+            NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
+            [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
         }
         // NSLog(@"submedia -->%@ %@ %@", subMediaType == kCVPixelFormatType_32BGRA?@"yes":@"no", subMediaType == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange?@"yes":@"no", subMediaType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange?@"yes":@"no");
     }
@@ -143,44 +151,10 @@ static void releaseNSData(void *o, void *block, size_t size) {
             // 如果传了这个buffer则需要按照这个buffer去生成
             // CMSampleBufferSetOutputPresentationTimeStamp(sampleBuffer, [[NSDate date] timeIntervalSince1970] * 1000);
 
-            if (NO && CMSampleBufferGetDataBuffer(originSampleBuffer) != nil) {
-                // TODO:: Block Buffer
-                CMBlockBufferRef blockBuffer = nil;
-                size_t sampleSize = 1;
+            // CVImage Buffer
+            CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, true, nil, nil, videoInfo, &sampleTime, &copyBuffer);
+            // NSLog(@"cvimagebuffer ->%@", copyBuffer);
 
-                CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
-                UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
-                NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
-
-                CMBlockBufferCustomBlockSource blockSource = {
-                    .version       = kCMBlockBufferCustomBlockSourceVersion,
-                    .AllocateBlock = nil,
-                    .FreeBlock     = &releaseNSData,
-                    .refCon        = (__bridge_retained void*) theNewPhoto,
-                };
-                CMBlockBufferCreateWithMemoryBlock(nil, (uint8_t*)theNewPhoto.bytes, theNewPhoto.length, nil, &blockSource, 0, theNewPhoto.length, 0, &blockBuffer);
-                CMSampleBufferCreate(kCFAllocatorDefault, blockBuffer, YES, nil, nil, videoInfo, 1, 0, &sampleTime, 1, &sampleSize, &copyBuffer);
-                NSLog(@"---> %@", CMSampleBufferGetDataBuffer(copyBuffer));
-                NSLog(@"===> %@", CMSampleBufferGetDataBuffer(originSampleBuffer));
-            }else {
-                // 此类需要视频完全匹配分辨率
-                static BOOL camerInfo = NO;
-                if (camerInfo == NO) {
-                    CVImageBufferRef originImageBuffer = CMSampleBufferGetImageBuffer(originSampleBuffer);
-                    NSString *str = [NSString stringWithFormat:@"%@\n%ldx%ld",
-                        [NSProcessInfo processInfo].processName,
-                        CVPixelBufferGetWidth(originImageBuffer),
-                        CVPixelBufferGetHeight(originImageBuffer)
-                    ];
-                    NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
-                    [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
-                    camerInfo = YES;
-                }
-
-                // CVImage Buffer
-                CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, true, nil, nil, videoInfo, &sampleTime, &copyBuffer);   
-                // NSLog(@"cvimagebuffer ->%@", copyBuffer);
-            }
             if (copyBuffer != nil) {
                 CFDictionaryRef exifAttachments = CMGetAttachment(originSampleBuffer, (CFStringRef)@"{Exif}", NULL);
                 CFDictionaryRef TIFFAttachments = CMGetAttachment(originSampleBuffer, (CFStringRef)@"{TIFF}", NULL);
@@ -287,6 +261,15 @@ CALayer *g_maskLayer = nil;
         // NSLog(@"g_previewLayer=>%@", g_previewLayer);
         // NSLog(@"g_previewLayer.readyForMoreMediaData %@", g_previewLayer.readyForMoreMediaData?@"yes":@"no");
         g_previewLayer.frame = self.bounds;
+
+        if ([g_fileManager fileExistsAtPath:g_tempFile]) {
+            g_maskLayer.opacity = 1;
+            g_previewLayer.opacity = 1;
+        }else {
+            g_maskLayer.opacity = 0;
+            g_previewLayer.opacity = 0;
+        }
+        
         // 防止和VideoOutput冲突
         static NSTimeInterval refreshTime = 0;
         NSTimeInterval nowTime = [[NSDate date] timeIntervalSince1970] * 1000;
@@ -299,15 +282,10 @@ CALayer *g_maskLayer = nil;
                 // NSLog(@"-==-·刷新了 %f", nowTime);
                 CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:nil :NO];
                 if (newBuffer != nil) {
-                    g_maskLayer.opacity = 1;
-                    g_previewLayer.opacity = 1;
                     [g_previewLayer flush];
                     if (copyBuffer != nil) CFRelease(copyBuffer);
                     CMSampleBufferCreateCopy(kCFAllocatorDefault, newBuffer, &copyBuffer);
                     if (copyBuffer != nil) [g_previewLayer enqueueSampleBuffer:copyBuffer];
-                }else {
-                    g_maskLayer.opacity = 0;
-                    g_previewLayer.opacity = 0;
                 }
             }
         }
@@ -459,9 +437,25 @@ CALayer *g_maskLayer = nil;
             MSHookMessageEx(
                 [delegate class], @selector(captureOutput:didFinishProcessingPhoto:error:),
                 imp_implementationWithBlock(^(id self, AVCapturePhotoOutput *captureOutput, AVCapturePhoto *photo, NSError *error){
+                    if (![g_fileManager fileExistsAtPath:g_tempFile]) {
+                        return original_method(self, @selector(captureOutput:didFinishProcessingPhoto:error:), captureOutput, photo, error);
+                    }
+                    
                     g_canReleaseBuffer = NO;
                     static CMSampleBufferRef copyBuffer = nil;
-                    CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:nil :YES];
+
+                    // 这里没有buffer，临时创建一个
+                    // NSLog(@"photo.pixelBuffer= %@", photo.pixelBuffer);
+                    CMSampleBufferRef tempBuffer = nil;
+                    CMSampleTimingInfo sampleTime = {0,};
+                    CMVideoFormatDescriptionRef videoInfo = nil;
+                    CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, photo.pixelBuffer, &videoInfo);
+                    CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, photo.pixelBuffer, true, nil, nil, videoInfo, &sampleTime, &tempBuffer);
+
+                    // 新的数据
+                    CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:tempBuffer :YES];
+                    if (tempBuffer != nil) CFRelease(tempBuffer); // 释放这个临时buffer
+
                     if (newBuffer != nil) { // 如果存在新的替换数据则挂钩属性
                         if (copyBuffer != nil) CFRelease(copyBuffer);
                         CMSampleBufferCreateCopy(kCFAllocatorDefault, newBuffer, &copyBuffer);
@@ -475,9 +469,10 @@ CALayer *g_maskLayer = nil;
                         __block NSData *(*fileDataRepresentationWithCustomizer)(id self, SEL _cmd, id<AVCapturePhotoFileDataRepresentationCustomizer> customizer);
                         MSHookMessageEx(
                             [photo class], @selector(fileDataRepresentationWithCustomizer:),
-                            imp_implementationWithBlock(^(id self, SEL _cmd, id<AVCapturePhotoFileDataRepresentationCustomizer> customizer){
+                            imp_implementationWithBlock(^(id self, id<AVCapturePhotoFileDataRepresentationCustomizer> customizer){
                                 NSLog(@"fileDataRepresentationWithCustomizer");
-                                return theNewPhoto;
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return theNewPhoto;
+                                return fileDataRepresentationWithCustomizer(self, @selector(fileDataRepresentationWithCustomizer:), customizer);
                             }), (IMP*)&fileDataRepresentationWithCustomizer
                         );
 
@@ -485,10 +480,9 @@ CALayer *g_maskLayer = nil;
                         MSHookMessageEx(
                             [photo class], @selector(fileDataRepresentation),
                             imp_implementationWithBlock(^(id self, SEL _cmd){
-                                // NSData *thefileDataRepresentation = fileDataRepresentation(self, @selector(fileDataRepresentation));
-                                // NSLog(@"拦截成功 %@", thefileDataRepresentation);
                                 NSLog(@"fileDataRepresentation");
-                                return theNewPhoto;
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return theNewPhoto;
+                                return fileDataRepresentation(self, @selector(fileDataRepresentation));
                             }), (IMP*)&fileDataRepresentation
                         );
 
@@ -502,30 +496,33 @@ CALayer *g_maskLayer = nil;
                             }), (IMP*)&previewPixelBuffer
                         );
 
-                        __block CVPixelBufferRef *(*pixelBuffer)(id self, SEL _cmd);
+                        __block CVImageBufferRef (*pixelBuffer)(id self, SEL _cmd);
                         MSHookMessageEx(
                             [photo class], @selector(pixelBuffer),
                             imp_implementationWithBlock(^(id self, SEL _cmd){
                                 NSLog(@"pixelBuffer");
-                                return imageBuffer;
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return imageBuffer;
+                                return pixelBuffer(self, @selector(pixelBuffer));
                             }), (IMP*)&pixelBuffer
                         );
 
-                        __block CGImageRef *(*CGImageRepresentation)(id self, SEL _cmd);
+                        __block CIImage *(*CGImageRepresentation)(id self, SEL _cmd);
                         MSHookMessageEx(
                             [photo class], @selector(CGImageRepresentation),
                             imp_implementationWithBlock(^(id self, SEL _cmd){
                                 NSLog(@"CGImageRepresentation");
-                                return uiimage.CGImage;
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+                                return CGImageRepresentation(self, @selector(CGImageRepresentation));
                             }), (IMP*)&CGImageRepresentation
                         );
 
-                        __block CGImageRef *(*previewCGImageRepresentation)(id self, SEL _cmd);
+                        __block CIImage *(*previewCGImageRepresentation)(id self, SEL _cmd);
                         MSHookMessageEx(
                             [photo class], @selector(previewCGImageRepresentation),
                             imp_implementationWithBlock(^(id self, SEL _cmd){
                                 NSLog(@"previewCGImageRepresentation");
-                                return uiimage.CGImage;
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+                                return previewCGImageRepresentation(self, @selector(previewCGImageRepresentation));
                             }), (IMP*)&previewCGImageRepresentation
                         );
                     }
@@ -660,6 +657,7 @@ static NSTimeInterval g_volume_down_time = 0;
         picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
         picker.mediaTypes = [NSArray arrayWithObjects:@"public.movie",/* @"public.image",*/ nil];
         picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+        if (@available(iOS 11.0, *)) picker.videoExportPreset = AVAssetExportPresetPassthrough;
         picker.allowsEditing = YES;
         picker.delegate = delegate;
         [[GetFrame getKeyWindow].rootViewController presentViewController:picker animated:YES completion:nil];
@@ -697,6 +695,7 @@ static NSTimeInterval g_volume_down_time = 0;
             picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
             picker.mediaTypes = [NSArray arrayWithObjects:@"public.movie",/* @"public.image",*/ nil];
             picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+            if (@available(iOS 11.0, *)) picker.videoExportPreset = AVAssetExportPresetPassthrough;
             picker.allowsEditing = YES;
             picker.delegate = delegate;
             [[GetFrame getKeyWindow].rootViewController presentViewController:picker animated:YES completion:nil];
