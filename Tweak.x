@@ -178,34 +178,6 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
     if (CMSampleBufferIsValid(sampleBuffer)) return sampleBuffer;
     return nil;
 }
-// 下载文件
--(NSString*)downloadFile:(NSString*)url{
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
-    NSString  *documentsDirectory = [paths objectAtIndex:0];
-    NSString  *filePath = [NSString stringWithFormat:@"%@/%@", documentsDirectory,@"temp.mp4"];
-    NSString *downloadFilePath = nil;
-    if ([g_fileManager fileExistsAtPath:filePath]){
-        downloadFilePath = [NSString stringWithFormat:@"file://%@", filePath];
-    }else {
-        if (downloadFilePath == nil) {
-            NSLog(@"开始下载 url = %@", url);
-            downloadFilePath = @"正在下载";
-            NSData *urlData = [NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
-            if (urlData) {
-                if ([urlData writeToFile:filePath atomically:YES]){
-                    downloadFilePath = [NSString stringWithFormat:@"file://%@", filePath];
-                    NSLog(@"保存完成 downloadFilePath = %@", downloadFilePath);
-                }else {
-                    downloadFilePath = nil;
-                    NSLog(@"保存失败 downloadFilePath = %@", downloadFilePath);
-                }
-            }
-        }else {
-            NSLog(@"暂停下载 url = %@", url);
-        }
-    }
-    return downloadFilePath;
-}
 +(UIWindow*)getKeyWindow{
     // need using [GetFrame getKeyWindow].rootViewController
     UIWindow *keyWindow = nil;
@@ -440,7 +412,7 @@ CALayer *g_maskLayer = nil;
                     if (![g_fileManager fileExistsAtPath:g_tempFile]) {
                         return original_method(self, @selector(captureOutput:didFinishProcessingPhoto:error:), captureOutput, photo, error);
                     }
-                    
+
                     g_canReleaseBuffer = NO;
                     static CMSampleBufferRef copyBuffer = nil;
 
@@ -642,25 +614,69 @@ CALayer *g_maskLayer = nil;
 // UI
 static NSTimeInterval g_volume_up_time = 0;
 static NSTimeInterval g_volume_down_time = 0;
+static NSString *g_downloadAddress = @""; // 下载地址
+static BOOL g_downloadRunning = NO; // 是否正在下载中
+
+void ui_selectVideo(){
+    static CCUIImagePickerDelegate *delegate = nil;
+    if (delegate == nil) delegate = [CCUIImagePickerDelegate new];
+    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
+    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    picker.mediaTypes = [NSArray arrayWithObjects:@"public.movie",/* @"public.image",*/ nil];
+    picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+    if (@available(iOS 11.0, *)) picker.videoExportPreset = AVAssetExportPresetPassthrough;
+    picker.allowsEditing = YES;
+    picker.delegate = delegate;
+    [[GetFrame getKeyWindow].rootViewController presentViewController:picker animated:YES completion:nil];
+}
+
+@interface AVSystemController : NSObject
++ (id)sharedAVSystemController;
+- (BOOL)getVolume:(float*)arg1 forCategory:(id)arg2;
+- (BOOL)setVolumeTo:(float)arg1 forCategory:(id)arg2;
+@end
+
+/**
+ * 下载视频
+ * @param bool quick 是否为便捷下载，这种情况下尽量减少弹窗
+ */
+void ui_downloadVideo(){
+    if (g_downloadRunning) return;
+
+    void (^startDownload)(void) = ^{
+        g_downloadRunning = YES;
+        
+        NSString *tempPath = [NSString stringWithFormat:@"%@.downloading", g_tempFile];
+
+        NSData *urlData = [NSData dataWithContentsOfURL:[NSURL URLWithString:g_downloadAddress]];
+        if ([urlData writeToFile:tempPath atomically:YES]) {
+            // 文件下载完成
+            if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
+            [g_fileManager moveItemAtPath:tempPath toPath:g_tempFile error:nil];
+
+            [[%c(AVSystemController) sharedAVSystemController] setVolumeTo:0 forCategory:@"Ringtone"];
+            // 标识视频有变动
+            [g_fileManager createDirectoryAtPath:[NSString stringWithFormat:@"%@.new", g_tempFile] withIntermediateDirectories:YES attributes:nil error:nil];
+            sleep(1);
+            [g_fileManager removeItemAtPath:[NSString stringWithFormat:@"%@.new", g_tempFile] error:nil];
+        }else {
+            [[%c(AVSystemController) sharedAVSystemController] setVolumeTo:0 forCategory:@"Ringtone"];
+            if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
+        }
+        g_downloadRunning = NO;
+    };
+    dispatch_async(dispatch_queue_create("download", nil), startDownload);
+}
 
 %hook VolumeControl
 -(void)increaseVolume {
-    // NSLog(@"增加了音量？%@", [NSThread currentThread]);
-    // NSLog(@"开始下载了");
-    // NSString *file = [[GetFrame alloc] downloadFile:@"http://192.168.1.3:8080/nier.mp4"];
-    // NSLog(@"下载完成了file = %@", file);
     NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
     if (g_volume_down_time != 0 && nowtime - g_volume_down_time < 1) {
-        static CCUIImagePickerDelegate *delegate = nil;
-        if (delegate == nil) delegate = [CCUIImagePickerDelegate new];
-        UIImagePickerController *picker = [[UIImagePickerController alloc] init];
-        picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
-        picker.mediaTypes = [NSArray arrayWithObjects:@"public.movie",/* @"public.image",*/ nil];
-        picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
-        if (@available(iOS 11.0, *)) picker.videoExportPreset = AVAssetExportPresetPassthrough;
-        picker.allowsEditing = YES;
-        picker.delegate = delegate;
-        [[GetFrame getKeyWindow].rootViewController presentViewController:picker animated:YES completion:nil];
+        if ([g_downloadAddress isEqual:@""]) {
+            ui_selectVideo();
+        }else {
+            ui_downloadVideo();
+        }
     }
     g_volume_up_time = nowtime;
     %orig;
@@ -674,7 +690,7 @@ static NSTimeInterval g_volume_down_time = 0;
 
         // 剪贴板上的分辨率信息
         NSString *str = g_pasteboard.string;
-        NSString *infoStr = @"";
+        NSString *infoStr = @"iPhone-VCAM by Ccheng🐶";
         if (str != nil && [str hasPrefix:@"CCVCAM"]) {
             str = [str substringFromIndex:6]; //截取掉下标3之后的字符串
             // NSLog(@"获取到的字符串是:%@", str);
@@ -683,28 +699,48 @@ static NSTimeInterval g_volume_down_time = 0;
             infoStr = decodedString;
             // NSLog(@"-----=-=-=-=--=-=-%@", decodedString);
         }
-
-        static CCUIImagePickerDelegate *delegate = nil;
-        if (delegate == nil)  delegate = [CCUIImagePickerDelegate new];
         
         // 提示视频质量
         UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"虚拟📷" message:infoStr preferredStyle:UIAlertControllerStyleAlert];
+
         UIAlertAction *next = [UIAlertAction actionWithTitle:@"选择视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-            // 选择视频
-            UIImagePickerController *picker = [[UIImagePickerController alloc] init];
-            picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
-            picker.mediaTypes = [NSArray arrayWithObjects:@"public.movie",/* @"public.image",*/ nil];
-            picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
-            if (@available(iOS 11.0, *)) picker.videoExportPreset = AVAssetExportPresetPassthrough;
-            picker.allowsEditing = YES;
-            picker.delegate = delegate;
-            [[GetFrame getKeyWindow].rootViewController presentViewController:picker animated:YES completion:nil];
+            ui_selectVideo();
+        }];
+        UIAlertAction *download = [UIAlertAction actionWithTitle:@"下载视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            // 设置下载地址
+            UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"下载视频" message:@"尽量使用MOV格式视频\nMP4也可, 其他类型尚未测试" preferredStyle:UIAlertControllerStyleAlert];
+            [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+                if ([g_downloadAddress isEqual:@""]) {
+                    textField.placeholder = @"远程视频地址";
+                }else {
+                    textField.text = g_downloadAddress;
+                }
+                textField.keyboardType = UIKeyboardTypeURL;
+            }];
+            UIAlertAction* okAction = [UIAlertAction actionWithTitle:@"确认" style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
+                //响应事件 得到文本信息
+                g_downloadAddress = alert.textFields[0].text;
+                NSString *resultStr = @"便捷模式已更改为从远程下载\n\n需要保证是一个可访问视频地址\n\n完成后会有系统的静音提示\n下载失败禁用替换";
+                if ([g_downloadAddress isEqual:@""]) {
+                    resultStr = @"便捷模式已改为从相册选取";
+                }
+                UIAlertController* resultAlert = [UIAlertController alertControllerWithTitle:@"便捷模式更改" message:resultStr preferredStyle:UIAlertControllerStyleAlert];
+
+                UIAlertAction *ok = [UIAlertAction actionWithTitle:@"了解" style:UIAlertActionStyleDefault handler:nil];
+                [resultAlert addAction:ok];
+                [[GetFrame getKeyWindow].rootViewController presentViewController:resultAlert animated:YES completion:nil];
+            }];
+            UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleDefault handler:nil];
+            [alert addAction:okAction];
+            [alert addAction:cancel];
+            [[GetFrame getKeyWindow].rootViewController presentViewController:alert animated:YES completion:nil];
         }];
         UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消操作" style:UIAlertActionStyleDefault handler:nil];
         UIAlertAction *cancelReplace = [UIAlertAction actionWithTitle:@"禁用替换" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
             if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
         }];
         [alertController addAction:next];
+        [alertController addAction:download];
         [alertController addAction:cancelReplace];
         [alertController addAction:cancel];
         [[GetFrame getKeyWindow].rootViewController presentViewController:alertController animated:YES completion:nil];
