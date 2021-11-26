@@ -49,7 +49,7 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
                 CVPixelBufferGetWidth(originImageBuffer),
                 CVPixelBufferGetHeight(originImageBuffer)
             ];
-            // NSLog(@"camera info = %@", str);
+            NSLog(@"camera info = %@", str);
             NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
             [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
         }
@@ -419,12 +419,14 @@ CALayer *g_maskLayer = nil;
                     // 这里没有buffer，临时创建一个
                     // NSLog(@"photo.pixelBuffer= %@", photo.pixelBuffer);
                     CMSampleBufferRef tempBuffer = nil;
+                    CVPixelBufferRef tempPixelBuffer = photo.pixelBuffer;
                     CMSampleTimingInfo sampleTime = {0,};
                     CMVideoFormatDescriptionRef videoInfo = nil;
-                    CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, photo.pixelBuffer, &videoInfo);
-                    CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, photo.pixelBuffer, true, nil, nil, videoInfo, &sampleTime, &tempBuffer);
+                    CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, tempPixelBuffer, &videoInfo);
+                    CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, tempPixelBuffer, true, nil, nil, videoInfo, &sampleTime, &tempBuffer);
 
                     // 新的数据
+                    NSLog(@"tempbuffer = %@, photo.pixelBuffer = %@, photo.CGImageRepresentation=%@", tempBuffer, photo.pixelBuffer, photo.CGImageRepresentation);
                     CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:tempBuffer :YES];
                     if (tempBuffer != nil) CFRelease(tempBuffer); // 释放这个临时buffer
 
@@ -434,7 +436,12 @@ CALayer *g_maskLayer = nil;
 
                         __block CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(copyBuffer);
                         CIImage *ciimage = [CIImage imageWithCVImageBuffer:imageBuffer];
-                        __block UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
+
+                        CIImage *ciimageRotate = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationLeft];
+                        CIContext *cicontext = [CIContext new]; // 此处旋转问题
+                        __block CGImageRef _Nullable cgimage = [cicontext createCGImage:ciimageRotate fromRect:ciimageRotate.extent];
+
+                        UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
                         __block NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
 
                         // 获取到了新的buffer之后开始挂钩属性
@@ -478,22 +485,22 @@ CALayer *g_maskLayer = nil;
                             }), (IMP*)&pixelBuffer
                         );
 
-                        __block CIImage *(*CGImageRepresentation)(id self, SEL _cmd);
+                        __block CGImageRef _Nullable(*CGImageRepresentation)(id self, SEL _cmd);
                         MSHookMessageEx(
                             [photo class], @selector(CGImageRepresentation),
                             imp_implementationWithBlock(^(id self, SEL _cmd){
                                 NSLog(@"CGImageRepresentation");
-                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return cgimage;
                                 return CGImageRepresentation(self, @selector(CGImageRepresentation));
                             }), (IMP*)&CGImageRepresentation
                         );
 
-                        __block CIImage *(*previewCGImageRepresentation)(id self, SEL _cmd);
+                        __block CGImageRef _Nullable(*previewCGImageRepresentation)(id self, SEL _cmd);
                         MSHookMessageEx(
                             [photo class], @selector(previewCGImageRepresentation),
                             imp_implementationWithBlock(^(id self, SEL _cmd){
                                 NSLog(@"previewCGImageRepresentation");
-                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+                                if ([g_fileManager fileExistsAtPath:g_tempFile]) return cgimage;
                                 return previewCGImageRepresentation(self, @selector(previewCGImageRepresentation));
                             }), (IMP*)&previewCGImageRepresentation
                         );
