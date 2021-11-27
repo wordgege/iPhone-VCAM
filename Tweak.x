@@ -666,7 +666,7 @@ void ui_downloadVideo(){
                 // 文件下载完成
                 if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
                 [g_fileManager moveItemAtPath:tempPath toPath:g_tempFile error:nil];
-                
+                [[%c(AVSystemController) sharedAVSystemController] setVolumeTo:0 forCategory:@"Ringtone"];
                 // 标识视频有变动
                 [g_fileManager createDirectoryAtPath:[NSString stringWithFormat:@"%@.new", g_tempFile] withIntermediateDirectories:YES attributes:nil error:nil];
                 sleep(1);
@@ -674,11 +674,10 @@ void ui_downloadVideo(){
             }else {
                 if ([g_fileManager fileExistsAtPath:tempPath]) [g_fileManager removeItemAtPath:tempPath error:nil];
             }
-            [[%c(AVSystemController) sharedAVSystemController] setVolumeTo:0 forCategory:@"Ringtone"];
         }else {
-            [[%c(AVSystemController) sharedAVSystemController] setVolumeTo:0 forCategory:@"Ringtone"];
             if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
         }
+        [[%c(AVSystemController) sharedAVSystemController] setVolumeTo:0 forCategory:@"Ringtone"];
         g_downloadRunning = NO;
     };
     dispatch_async(dispatch_queue_create("download", nil), startDownload);
