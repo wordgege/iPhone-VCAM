@@ -11,6 +11,9 @@ static AVSampleBufferDisplayLayer *g_previewLayer = nil; // 原生相机预览
 static NSTimeInterval g_refreshPreviewByVideoDataOutputTime = 0; // 如果存在 VideoDataOutput, 预览画面会同步VideoDataOutput的画面, 如果没有则会直接读取视频显示
 static BOOL g_cameraRunning = NO;
 
+static long g_originBufferWidth = 0;
+static long g_originBufferHeight = 0;
+
 NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件位置
 
 
@@ -26,6 +29,7 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
     static AVAssetReaderTrackOutput *videoTrackout_32BGRA = nil;
     static AVAssetReaderTrackOutput *videoTrackout_420YpCbCr8BiPlanarVideoRange = nil;
     static AVAssetReaderTrackOutput *videoTrackout_420YpCbCr8BiPlanarFullRange = nil;
+    // static AVAssetReaderTrackOutput *audioTrackout_pcm = nil;
 
     static CMSampleBufferRef sampleBuffer = nil;
 
@@ -38,21 +42,33 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
         mediaType = CMFormatDescriptionGetMediaType(formatDescription);
         subMediaType = CMFormatDescriptionGetMediaSubType(formatDescription);
         if (mediaType != kCMMediaType_Video) {
+            // if (mediaType == kCMMediaType_Audio && subMediaType == kAudioFormatLinearPCM) {
+            //     if (reader != nil && audioTrackout_pcm != nil && [reader status] == AVAssetReaderStatusReading) {
+            //         NSLog(@"ok");
+                    
+            //         static CMSampleBufferRef audioBuffer = nil;
+            //         if (audioBuffer != nil) CFRelease(audioBuffer);
+            //         audioBuffer = [audioTrackout_pcm copyNextSampleBuffer];
+            //         NSLog(@"audioBuffer = %@", audioBuffer);
+            //         // return audioBuffer;
+            //     }
+            // }
             // @see https://developer.apple.com/documentation/coremedia/cmmediatype?language=objc
             return originSampleBuffer;
         }
+
         // 此类需要视频完全匹配分辨率
-        CVImageBufferRef originImageBuffer = CMSampleBufferGetImageBuffer(originSampleBuffer);
-        if (originImageBuffer != nil) {
-            NSString *str = [NSString stringWithFormat:@"%@\nwidth: %ld\nheight: %ld",
-                [NSProcessInfo processInfo].processName,
-                CVPixelBufferGetWidth(originImageBuffer),
-                CVPixelBufferGetHeight(originImageBuffer)
-            ];
-            NSLog(@"camera info = %@", str);
-            NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
-            [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
-        }
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+        g_originBufferWidth = dimensions.width;
+        g_originBufferHeight = dimensions.height;
+        NSString *str = [NSString stringWithFormat:@"%@\nwidth: %ld\nheight: %ld",
+            [NSProcessInfo processInfo].processName,
+            g_originBufferWidth,
+            g_originBufferHeight
+        ];
+        // NSLog(@"camera info = %@", str);
+        NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
+        [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
         // NSLog(@"submedia -->%@ %@ %@", subMediaType == kCVPixelFormatType_32BGRA?@"yes":@"no", subMediaType == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange?@"yes":@"no", subMediaType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange?@"yes":@"no");
     }
 
@@ -91,9 +107,16 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
             videoTrackout_420YpCbCr8BiPlanarVideoRange = [[AVAssetReaderTrackOutput alloc] initWithTrack:videoTrack outputSettings:@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)}];
             videoTrackout_420YpCbCr8BiPlanarFullRange = [[AVAssetReaderTrackOutput alloc] initWithTrack:videoTrack outputSettings:@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)}];
             
+            // AVAssetTrack *audioTrack = [[asset tracksWithMediaType:AVMediaTypeAudio] firstObject]; // 获取轨道
+            // audioTrackout_pcm = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:audioTrack outputSettings:@{AVFormatIDKey : [NSNumber numberWithInt:kAudioFormatLinearPCM]}];
+            
+            
             [reader addOutput:videoTrackout_32BGRA];
             [reader addOutput:videoTrackout_420YpCbCr8BiPlanarVideoRange];
             [reader addOutput:videoTrackout_420YpCbCr8BiPlanarFullRange];
+
+            // [reader addOutput:audioTrackout_pcm];
+
             [reader startReading];
             // NSLog(@"这是初始化读取");
         }@catch(NSException *except) {
@@ -337,7 +360,8 @@ CALayer *g_maskLayer = nil;
         
         CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
         if (@available(iOS 11.0, *)) { // 旋转问题
-            ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+            if (g_originBufferHeight > g_originBufferWidth)
+                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
         }
         UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
         NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
@@ -355,7 +379,8 @@ CALayer *g_maskLayer = nil;
         CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(newBuffer);
         CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
         if (@available(iOS 11.0, *)) { // 旋转问题
-            ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+            if (g_originBufferHeight > g_originBufferWidth)
+                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
         }
         UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
         NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
@@ -782,5 +807,12 @@ void ui_downloadVideo(){
 }
 
 %dtor{
+    g_fileManager = nil;
+    g_pasteboard = nil;
+    g_canReleaseBuffer = YES;
+    g_bufferReload = YES;
+    g_previewLayer = nil;
+    g_refreshPreviewByVideoDataOutputTime = 0;
+    g_cameraRunning = NO;
     NSLog(@"卸载完成了");
 }
