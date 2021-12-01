@@ -11,9 +11,8 @@ static AVSampleBufferDisplayLayer *g_previewLayer = nil; // 原生相机预览
 static NSTimeInterval g_refreshPreviewByVideoDataOutputTime = 0; // 如果存在 VideoDataOutput, 预览画面会同步VideoDataOutput的画面, 如果没有则会直接读取视频显示
 static BOOL g_cameraRunning = NO;
 
-static long g_originBufferWidth = 0;
-static long g_originBufferHeight = 0;
-
+NSString *g_isRotateMark = @"/var/mobile/Library/Caches/vcam_is_rotate_mark";
+NSString *g_isMirroredMark = @"/var/mobile/Library/Caches/vcam_is_mirrored_mark";
 NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件位置
 
 
@@ -242,19 +241,19 @@ CALayer *g_maskLayer = nil;
 }
 %new
 -(void)step:(CADisplayLink *)sender{
+    if ([g_fileManager fileExistsAtPath:g_tempFile]) {
+        if (g_maskLayer != nil) g_maskLayer.opacity = 1;
+        if (g_previewLayer != nil) g_previewLayer.opacity = 1;
+    }else {
+        if (g_maskLayer != nil) g_maskLayer.opacity = 0;
+        if (g_previewLayer != nil) g_previewLayer.opacity = 0;
+    }
+
     if (g_cameraRunning && g_previewLayer != nil) {
         // NSLog(@"g_previewLayer=>%@", g_previewLayer);
         // NSLog(@"g_previewLayer.readyForMoreMediaData %@", g_previewLayer.readyForMoreMediaData?@"yes":@"no");
         g_previewLayer.frame = self.bounds;
 
-        if ([g_fileManager fileExistsAtPath:g_tempFile]) {
-            g_maskLayer.opacity = 1;
-            g_previewLayer.opacity = 1;
-        }else {
-            g_maskLayer.opacity = 0;
-            g_previewLayer.opacity = 0;
-        }
-        
         // 防止和VideoOutput冲突
         static NSTimeInterval refreshTime = 0;
         NSTimeInterval nowTime = [[NSDate date] timeIntervalSince1970] * 1000;
@@ -348,13 +347,17 @@ CALayer *g_maskLayer = nil;
     CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:nil :NO];
     if (newBuffer != nil) {
         CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(newBuffer);
-        
+
         CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
         if (@available(iOS 11.0, *)) { // 旋转问题
-            if (g_originBufferHeight > g_originBufferWidth)
+            if ([g_fileManager fileExistsAtPath:g_isRotateMark]) {
                 ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+            }
+            if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDownMirrored];
+            }
         }
-        UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
+        UIImage *uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUp];
         NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
         return theNewPhoto;
     }
@@ -370,10 +373,14 @@ CALayer *g_maskLayer = nil;
         CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(newBuffer);
         CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
         if (@available(iOS 11.0, *)) { // 旋转问题
-            if (g_originBufferHeight > g_originBufferWidth)
+            if ([g_fileManager fileExistsAtPath:g_isRotateMark]) {
                 ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+            }
+            if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDownMirrored];
+            }
         }
-        UIImage *uiimage = [UIImage imageWithCIImage:ciimage];
+        UIImage *uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUp];
         NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
         return theNewPhoto;
     }
@@ -394,7 +401,7 @@ CALayer *g_maskLayer = nil;
                 [delegate class], @selector(captureOutput:didFinishProcessingPhotoSampleBuffer:previewPhotoSampleBuffer:resolvedSettings:bracketSettings:error:),
                 imp_implementationWithBlock(^(id self, AVCapturePhotoOutput *output, CMSampleBufferRef photoSampleBuffer, CMSampleBufferRef previewPhotoSampleBuffer, AVCaptureResolvedPhotoSettings *resolvedSettings, AVCaptureBracketedStillImageSettings *bracketSettings, NSError *error){
                     g_canReleaseBuffer = NO;
-                    CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:photoSampleBuffer :YES];
+                    CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:photoSampleBuffer :NO];
                     if (newBuffer != nil) {
                         photoSampleBuffer = newBuffer;
                         // NSLog(@"新的buffer = %@", newBuffer);
@@ -766,14 +773,37 @@ void ui_downloadVideo(){
             [alert addAction:cancel];
             [[GetFrame getKeyWindow].rootViewController presentViewController:alert animated:YES completion:nil];
         }];
-        UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消操作" style:UIAlertActionStyleDefault handler:nil];
         UIAlertAction *cancelReplace = [UIAlertAction actionWithTitle:@"禁用替换" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
             if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
         }];
+
+        NSString *isRotateText = @"尝试修复拍照旋转";
+        if ([g_fileManager fileExistsAtPath:g_isRotateMark]) isRotateText = @"尝试修复拍照旋转 ✅";
+        UIAlertAction *isRotate = [UIAlertAction actionWithTitle:isRotateText style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            if ([g_fileManager fileExistsAtPath:g_isRotateMark]) {
+                [g_fileManager removeItemAtPath:g_isRotateMark error:nil];
+            }else {
+                [g_fileManager createDirectoryAtPath:g_isRotateMark withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+        }];
+        
+        NSString *isMirroredText = @"尝试修复拍照翻转";
+        if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) isMirroredText = @"尝试修复拍照翻转 ✅";
+        UIAlertAction *isMirrored = [UIAlertAction actionWithTitle:isMirroredText style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+                [g_fileManager removeItemAtPath:g_isMirroredMark error:nil];
+            }else {
+                [g_fileManager createDirectoryAtPath:g_isMirroredMark withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+        }];
+        UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消操作" style:UIAlertActionStyleDefault handler:nil];
+
         [alertController addAction:next];
         [alertController addAction:download];
         [alertController addAction:cancelReplace];
         [alertController addAction:cancel];
+        [alertController addAction:isRotate];
+        [alertController addAction:isMirrored];
         [[GetFrame getKeyWindow].rootViewController presentViewController:alertController animated:YES completion:nil];
     }
     g_volume_down_time = nowtime;
