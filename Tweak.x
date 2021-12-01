@@ -56,20 +56,6 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
             // @see https://developer.apple.com/documentation/coremedia/cmmediatype?language=objc
             return originSampleBuffer;
         }
-
-        // 此类需要视频完全匹配分辨率
-        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
-        g_originBufferWidth = dimensions.width;
-        g_originBufferHeight = dimensions.height;
-        NSString *str = [NSString stringWithFormat:@"%@\nwidth: %ld\nheight: %ld",
-            [NSProcessInfo processInfo].processName,
-            g_originBufferWidth,
-            g_originBufferHeight
-        ];
-        // NSLog(@"camera info = %@", str);
-        NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
-        [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
-        // NSLog(@"submedia -->%@ %@ %@", subMediaType == kCVPixelFormatType_32BGRA?@"yes":@"no", subMediaType == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange?@"yes":@"no", subMediaType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange?@"yes":@"no");
     }
 
     // 没有替换视频则返回空以使用原来的数据
@@ -314,14 +300,19 @@ CALayer *g_maskLayer = nil;
         [formatter setDateFormat:@"YYYY-MM-dd HH:mm:ss"];
 
         AVCaptureDeviceFormat *activeFormat = [[input device] activeFormat];
+        AVFrameRateRange *frameRateRange = [activeFormat videoSupportedFrameRateRanges][0];
+        CMFormatDescriptionRef formatDescription = [activeFormat formatDescription];
 
-        NSString *format= [NSString stringWithFormat:@"%@", activeFormat];
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
 
-        NSString *str = [NSString stringWithFormat:@"%@\n%@-%@\n%@",
+        // NSLog(@"formatDescription=>%@", formatDescription);
+
+        NSString *str = [NSString stringWithFormat:@"%@\n%@ - %@\nW:%d  H:%d\nFPS: %.f - %.f",
             [formatter stringFromDate:datenow],
             [NSProcessInfo processInfo].processName,
-            [[input device] position] == 1 ? @"back" : @"front", 
-            [NSString stringWithFormat:@"<%@", [format substringFromIndex: 36]]
+            [[input device] position] == 1 ? @"B" : @"F",
+            dimensions.width, dimensions.height,
+            [frameRateRange minFrameRate], [frameRateRange maxFrameRate]
         ];
         NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
 
