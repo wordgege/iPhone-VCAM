@@ -10,8 +10,9 @@ static BOOL g_bufferReload = YES; // 是否需要立即重新刷新视频文件
 static AVSampleBufferDisplayLayer *g_previewLayer = nil; // 原生相机预览
 static NSTimeInterval g_refreshPreviewByVideoDataOutputTime = 0; // 如果存在 VideoDataOutput, 预览画面会同步VideoDataOutput的画面, 如果没有则会直接读取视频显示
 static BOOL g_cameraRunning = NO;
+static NSString *g_cameraPosition = @"B"; // B 为后置摄像头、F 为前置摄像头
+static AVCaptureVideoOrientation g_photoOrientation = AVCaptureVideoOrientationPortrait; // 视频的方向
 
-NSString *g_isRotateMark = @"/var/mobile/Library/Caches/vcam_is_rotate_mark";
 NSString *g_isMirroredMark = @"/var/mobile/Library/Caches/vcam_is_mirrored_mark";
 NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件位置
 
@@ -36,10 +37,12 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
     CMFormatDescriptionRef formatDescription = nil;
     CMMediaType mediaType = -1;
     CMMediaType subMediaType = -1;
+    CMVideoDimensions dimensions;
     if (originSampleBuffer != nil) {
         formatDescription = CMSampleBufferGetFormatDescription(originSampleBuffer);
         mediaType = CMFormatDescriptionGetMediaType(formatDescription);
         subMediaType = CMFormatDescriptionGetMediaSubType(formatDescription);
+        dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
         if (mediaType != kCMMediaType_Video) {
             // if (mediaType == kCMMediaType_Audio && subMediaType == kAudioFormatLinearPCM) {
             //     if (reader != nil && audioTrackout_pcm != nil && [reader status] == AVAssetReaderStatusReading) {
@@ -149,6 +152,10 @@ NSString *g_tempFile = @"/var/mobile/Library/Caches/temp.mov"; // 临时文件�
             CMSampleBufferRef copyBuffer = nil;
             
             CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(newsampleBuffer);
+
+            // NSLog(@"width:%ld height:%ld", CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer));
+            // NSLog(@"width:%d height:%d ===", dimensions.width, dimensions.height);
+
             // TODO:: 滤镜
 
             CMSampleTimingInfo sampleTime = {
@@ -223,7 +230,6 @@ CALayer *g_maskLayer = nil;
     // 播放条目
     if (![[self sublayers] containsObject:g_previewLayer]) {
         g_previewLayer = [[AVSampleBufferDisplayLayer alloc] init];
-        [g_previewLayer setVideoGravity:AVLayerVideoGravityResize];
 
         // black mask
         g_maskLayer = [CALayer new];
@@ -243,7 +249,10 @@ CALayer *g_maskLayer = nil;
 -(void)step:(CADisplayLink *)sender{
     if ([g_fileManager fileExistsAtPath:g_tempFile]) {
         if (g_maskLayer != nil) g_maskLayer.opacity = 1;
-        if (g_previewLayer != nil) g_previewLayer.opacity = 1;
+        if (g_previewLayer != nil) {
+            g_previewLayer.opacity = 1;
+            [g_previewLayer setVideoGravity:[self videoGravity]];
+        }
     }else {
         if (g_maskLayer != nil) g_maskLayer.opacity = 0;
         if (g_previewLayer != nil) g_previewLayer.opacity = 0;
@@ -253,6 +262,23 @@ CALayer *g_maskLayer = nil;
         // NSLog(@"g_previewLayer=>%@", g_previewLayer);
         // NSLog(@"g_previewLayer.readyForMoreMediaData %@", g_previewLayer.readyForMoreMediaData?@"yes":@"no");
         g_previewLayer.frame = self.bounds;
+        // NSLog(@"-->%@", NSStringFromCGSize(g_previewLayer.frame.size));
+
+        switch(g_photoOrientation) {
+            case AVCaptureVideoOrientationPortrait:
+                // NSLog(@"AVCaptureVideoOrientationPortrait");
+            case AVCaptureVideoOrientationPortraitUpsideDown:
+                // NSLog(@"AVCaptureVideoOrientationPortraitUpsideDown");
+                g_previewLayer.transform = CATransform3DMakeRotation(0 / 180.0 * M_PI, 0.0, 0.0, 1.0);break;
+            case AVCaptureVideoOrientationLandscapeRight:
+                // NSLog(@"AVCaptureVideoOrientationLandscapeRight");
+                g_previewLayer.transform = CATransform3DMakeRotation(90 / 180.0 * M_PI, 0.0, 0.0, 1.0);break;
+            case AVCaptureVideoOrientationLandscapeLeft:
+                // NSLog(@"AVCaptureVideoOrientationLandscapeLeft");
+                g_previewLayer.transform = CATransform3DMakeRotation(-90 / 180.0 * M_PI, 0.0, 0.0, 1.0);break;
+            default:
+                g_previewLayer.transform = self.transform;
+        }
 
         // 防止和VideoOutput冲突
         static NSTimeInterval refreshTime = 0;
@@ -262,7 +288,7 @@ CALayer *g_maskLayer = nil;
             static CMSampleBufferRef copyBuffer = nil;
             if (nowTime - refreshTime > 1000 / 33 && g_previewLayer.readyForMoreMediaData) {
                 refreshTime = nowTime;
-                g_previewLayer.transform = CATransform3DMakeRotation(0.0, 0.0, 0.0, 0.0);
+                g_photoOrientation = -1;
                 // NSLog(@"-==-·刷新了 %f", nowTime);
                 CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:nil :NO];
                 if (newBuffer != nil) {
@@ -270,6 +296,20 @@ CALayer *g_maskLayer = nil;
                     if (copyBuffer != nil) CFRelease(copyBuffer);
                     CMSampleBufferCreateCopy(kCFAllocatorDefault, newBuffer, &copyBuffer);
                     if (copyBuffer != nil) [g_previewLayer enqueueSampleBuffer:copyBuffer];
+
+                    // camera info
+                    NSDate *datenow = [NSDate date];
+                    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+                    [formatter setDateFormat:@"YYYY-MM-dd HH:mm:ss"];
+                    CGSize dimensions = self.bounds.size;
+                    NSString *str = [NSString stringWithFormat:@"%@\n%@ - %@\nW:%.0f  H:%.0f",
+                        [formatter stringFromDate:datenow],
+                        [NSProcessInfo processInfo].processName,
+                        [NSString stringWithFormat:@"%@ - %@", g_cameraPosition, @"preview"],
+                        dimensions.width, dimensions.height
+                    ];
+                    NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
+                    [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
                 }
             }
         }
@@ -293,29 +333,7 @@ CALayer *g_maskLayer = nil;
 }
 - (void)addInput:(AVCaptureDeviceInput *)input {
     if ([[input device] position] > 0) {
-        // [CCNotice notice:@"开始使用前置摄像头" :[NSString stringWithFormat:@"format=%@", [[input device] activeFormat]]];
-        NSDate *datenow = [NSDate date];
-        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-        [formatter setDateFormat:@"YYYY-MM-dd HH:mm:ss"];
-
-        AVCaptureDeviceFormat *activeFormat = [[input device] activeFormat];
-        AVFrameRateRange *frameRateRange = [activeFormat videoSupportedFrameRateRanges][0];
-        CMFormatDescriptionRef formatDescription = [activeFormat formatDescription];
-
-        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
-
-        // NSLog(@"formatDescription=>%@", formatDescription);
-
-        NSString *str = [NSString stringWithFormat:@"%@\n%@ - %@\nW:%d  H:%d\nFPS: %.f - %.f",
-            [formatter stringFromDate:datenow],
-            [NSProcessInfo processInfo].processName,
-            [[input device] position] == 1 ? @"B" : @"F",
-            dimensions.width, dimensions.height,
-            [frameRateRange minFrameRate], [frameRateRange maxFrameRate]
-        ];
-        NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
-
-        [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
+        g_cameraPosition = [[input device] position] == 1 ? @"B" : @"F";
     }
  	// NSLog(@"添加了一个输入设备 %@", [[input device] activeFormat]);
 	%orig;
@@ -350,14 +368,21 @@ CALayer *g_maskLayer = nil;
 
         CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
         if (@available(iOS 11.0, *)) { // 旋转问题
-            if ([g_fileManager fileExistsAtPath:g_isRotateMark]) {
-                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
-            }
-            if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
-                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDownMirrored];
+            switch(g_photoOrientation){
+                case AVCaptureVideoOrientationPortrait:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationUp];break;
+                case AVCaptureVideoOrientationPortraitUpsideDown:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDown];break;
+                case AVCaptureVideoOrientationLandscapeRight:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];break;
+                case AVCaptureVideoOrientationLandscapeLeft:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationLeft];break;
             }
         }
         UIImage *uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUp];
+        if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+            uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUpMirrored];
+        }
         NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
         return theNewPhoto;
     }
@@ -373,14 +398,21 @@ CALayer *g_maskLayer = nil;
         CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(newBuffer);
         CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
         if (@available(iOS 11.0, *)) { // 旋转问题
-            if ([g_fileManager fileExistsAtPath:g_isRotateMark]) {
-                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
-            }
-            if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
-                ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDownMirrored];
+            switch(g_photoOrientation){
+                case AVCaptureVideoOrientationPortrait:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationUp];break;
+                case AVCaptureVideoOrientationPortraitUpsideDown:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDown];break;
+                case AVCaptureVideoOrientationLandscapeRight:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];break;
+                case AVCaptureVideoOrientationLandscapeLeft:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationLeft];break;
             }
         }
         UIImage *uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUp];
+        if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+            uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUpMirrored];
+        }
         NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
         return theNewPhoto;
     }
@@ -569,16 +601,38 @@ CALayer *g_maskLayer = nil;
                 g_refreshPreviewByVideoDataOutputTime = ([[NSDate date] timeIntervalSince1970]) * 1000;
 
                 CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:sampleBuffer :NO];
-                if (newBuffer != nil) {
-                    sampleBuffer = newBuffer;
-                }
+
                 // 用buffer来刷新预览
-                if (g_previewLayer != nil && g_previewLayer.readyForMoreMediaData) {
-                    g_previewLayer.transform = CATransform3DMakeRotation(90.0 / 180.0 * M_PI, 0.0, 0.0, 1.0);
+                NSString *previewType = @"buffer";
+                g_photoOrientation = [connection videoOrientation];
+                if (newBuffer != nil && g_previewLayer != nil && g_previewLayer.readyForMoreMediaData) {
                     [g_previewLayer flush];
-                    [g_previewLayer enqueueSampleBuffer:sampleBuffer];
+                    [g_previewLayer enqueueSampleBuffer:newBuffer];
+                    previewType = @"buffer - preview";
                 }
-                return original_method(self, @selector(captureOutput:didOutputSampleBuffer:fromConnection:), output, sampleBuffer, connection);
+
+                static NSTimeInterval oldTime = 0;
+                NSTimeInterval nowTime = g_refreshPreviewByVideoDataOutputTime;
+                if (nowTime - oldTime > 3000) { // 3秒钟刷新一次
+                    oldTime = nowTime;
+                    // camera info
+                    // NSLog(@"set camera info");
+                    CMFormatDescriptionRef formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer);
+                    CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+                    NSDate *datenow = [NSDate date];
+                    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+                    [formatter setDateFormat:@"YYYY-MM-dd HH:mm:ss"];
+                    NSString *str = [NSString stringWithFormat:@"%@\n%@ - %@\nW:%d  H:%d",
+                        [formatter stringFromDate:datenow],
+                        [NSProcessInfo processInfo].processName,
+                        [NSString stringWithFormat:@"%@ - %@", g_cameraPosition, previewType],
+                        dimensions.width, dimensions.height
+                    ];
+                    NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
+                    [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
+                }
+                
+                return original_method(self, @selector(captureOutput:didOutputSampleBuffer:fromConnection:), output, newBuffer != nil? newBuffer: sampleBuffer, connection);
             }), (IMP*)&original_method
         );
     }
@@ -777,16 +831,6 @@ void ui_downloadVideo(){
             if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
         }];
 
-        NSString *isRotateText = @"尝试修复拍照旋转";
-        if ([g_fileManager fileExistsAtPath:g_isRotateMark]) isRotateText = @"尝试修复拍照旋转 ✅";
-        UIAlertAction *isRotate = [UIAlertAction actionWithTitle:isRotateText style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-            if ([g_fileManager fileExistsAtPath:g_isRotateMark]) {
-                [g_fileManager removeItemAtPath:g_isRotateMark error:nil];
-            }else {
-                [g_fileManager createDirectoryAtPath:g_isRotateMark withIntermediateDirectories:YES attributes:nil error:nil];
-            }
-        }];
-        
         NSString *isMirroredText = @"尝试修复拍照翻转";
         if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) isMirroredText = @"尝试修复拍照翻转 ✅";
         UIAlertAction *isMirrored = [UIAlertAction actionWithTitle:isMirroredText style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
@@ -802,7 +846,6 @@ void ui_downloadVideo(){
         [alertController addAction:download];
         [alertController addAction:cancelReplace];
         [alertController addAction:cancel];
-        [alertController addAction:isRotate];
         [alertController addAction:isMirrored];
         [[GetFrame getKeyWindow].rootViewController presentViewController:alertController animated:YES completion:nil];
     }
