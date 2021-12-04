@@ -782,7 +782,7 @@ void ui_downloadVideo(){
 
         // 剪贴板上的分辨率信息
         NSString *str = g_pasteboard.string;
-        NSString *infoStr = @"iPhone-VCAM by Ccheng🐶";
+        NSString *infoStr = @"使用镜头后将记录信息";
         if (str != nil && [str hasPrefix:@"CCVCAM"]) {
             str = [str substringFromIndex:6]; //截取掉下标3之后的字符串
             // NSLog(@"获取到的字符串是:%@", str);
@@ -793,7 +793,9 @@ void ui_downloadVideo(){
         }
         
         // 提示视频质量
-        UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"虚拟📷" message:infoStr preferredStyle:UIAlertControllerStyleAlert];
+        NSString *title = @"iOS-VCAM";
+        if ([g_fileManager fileExistsAtPath:g_tempFile]) title = @"iOS-VCAM ✅";
+        UIAlertController *alertController = [UIAlertController alertControllerWithTitle:title message:infoStr preferredStyle:UIAlertControllerStyleAlert];
 
         UIAlertAction *next = [UIAlertAction actionWithTitle:@"选择视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
             ui_selectVideo();
@@ -827,7 +829,7 @@ void ui_downloadVideo(){
             [alert addAction:cancel];
             [[GetFrame getKeyWindow].rootViewController presentViewController:alert animated:YES completion:nil];
         }];
-        UIAlertAction *cancelReplace = [UIAlertAction actionWithTitle:@"禁用替换" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        UIAlertAction *cancelReplace = [UIAlertAction actionWithTitle:@"禁用替换" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
             if ([g_fileManager fileExistsAtPath:g_tempFile]) [g_fileManager removeItemAtPath:g_tempFile error:nil];
         }];
 
@@ -840,12 +842,17 @@ void ui_downloadVideo(){
                 [g_fileManager createDirectoryAtPath:g_isMirroredMark withIntermediateDirectories:YES attributes:nil error:nil];
             }
         }];
-        UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消操作" style:UIAlertActionStyleDefault handler:nil];
+        UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消操作" style:UIAlertActionStyleCancel handler:nil];
+        UIAlertAction *showHelp = [UIAlertAction actionWithTitle:@"- 查看帮助 -" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            NSURL *URL = [NSURL URLWithString:@"https://github.com/trizau/iOS-VCAM"];
+            [[UIApplication sharedApplication]openURL:URL];
+        }];
 
         [alertController addAction:next];
         [alertController addAction:download];
         [alertController addAction:cancelReplace];
         [alertController addAction:cancel];
+        [alertController addAction:showHelp];
         [alertController addAction:isMirrored];
         [[GetFrame getKeyWindow].rootViewController presentViewController:alertController animated:YES completion:nil];
     }
