@@ -1,9 +1,9 @@
-Package: com.yourcompany.tttest
-Name: TTtest
+Package: com.if-she.cydia.vcam
+Name: VCAM4iOS
 Version: 0.0.1
 Architecture: iphoneos-arm
-Description: An awesome MobileSubstrate tweak!
-Maintainer: ccheng
-Author: ccheng
+Description: VCAM4iOS
+Maintainer: trizau
+Author: trizau
 Section: Tweaks
 Depends: mobilesubstrate (>= 0.9.5000)
