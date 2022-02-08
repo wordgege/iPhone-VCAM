@@ -1,3 +1,6 @@
+迁移至 https://github.com/trizau/iOS-VCAM
+
+
 # iPhone-VCAM
 
 基于 *Cydia Substrate* 的虚拟摄像头
